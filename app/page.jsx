@@ -348,7 +348,19 @@ export default function Home() {
         )}
       </div>
 
-      <video ref={videoRef} src={videoUrl} crossOrigin="anonymous" controls />
+      <video
+        ref={videoRef}
+        src={videoUrl ? `/api/video-proxy?url=${encodeURIComponent(videoUrl)}` : undefined}
+        controls
+        onError={(e) => {
+          const err = e.currentTarget.error;
+          const codes = { 1: "MEDIA_ERR_ABORTED", 2: "MEDIA_ERR_NETWORK", 3: "MEDIA_ERR_DECODE", 4: "MEDIA_ERR_SRC_NOT_SUPPORTED" };
+          console.error("Video element error:", err);
+          setStatus(
+            `خطای بارگذاری ویدیو: ${codes[err?.code] || "نامشخص"} — احتمالاً لینک مستقیم فایل نیست یا CORS ندارد`
+          );
+        }}
+      />
 
       <div className="status">{status}</div>
       <div className="subtitle">{subtitle}</div>
