@@ -154,9 +154,11 @@ export default function Home() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setStatus("متصل شد — در حال شروع پخش و ترجمه...");
-      videoRef.current.play();
-      startCapture();
+      setStatus("متصل شد — در حال ارسال پیام setup...");
+      // پروتکل Live API الزام می‌کند اولین و تنها پیام، setup باشد —
+      // حتی با توکن Constrained که تنظیمات مدل از قبل در توکن قفل شده،
+      // باز هم باید این پیام (خالی) به‌عنوان دست‌دادن اولیه ارسال شود.
+      ws.send(JSON.stringify({ setup: {} }));
     };
 
     ws.onmessage = async (event) => {
@@ -172,6 +174,14 @@ export default function Home() {
       if (msg.error) {
         console.error("Gemini server error:", msg.error);
         setStatus("خطای سرور: " + (msg.error.message || JSON.stringify(msg.error)));
+        return;
+      }
+
+      // تأیید سرور که setup پذیرفته شد — تازه از این‌جا اجازه داریم صدا بفرستیم
+      if (msg.setupComplete) {
+        setStatus("setup تأیید شد — در حال شروع پخش و ترجمه...");
+        videoRef.current.play();
+        startCapture();
         return;
       }
 
