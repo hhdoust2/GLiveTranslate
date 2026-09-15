@@ -1,21 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
 
-// این route هرگز کلید اصلی را به کلاینت نمی‌فرستد؛
-// فقط یک توکن کوتاه‌عمر (Ephemeral Token) می‌سازد که مرورگر
-// می‌تواند مستقیماً با آن به Gemini Live API وصل شود.
+// این route کلید API را از کلاینت می‌گیرد (روی HTTPS، پس رمزنگاری‌شده
+// در انتقال است)، فقط برای همین یک درخواست استفاده می‌کند، آن را در
+// جایی لاگ یا ذخیره نمی‌کند، و در ازایش یک توکن کوتاه‌عمر (Ephemeral
+// Token) برمی‌گرداند که مرورگر با آن مستقیماً به Gemini Live API وصل
+// می‌شود — یعنی کلید اصلی هیچ‌وقت روی اتصال WebSocket واقعی سفر نمی‌کند.
 export async function POST(request) {
   try {
-    if (!process.env.GEMINI_API_KEY) {
+    const { targetLanguage, apiKey } = await request.json().catch(() => ({}));
+
+    // کلید فقط از بدنه‌ی همین درخواست خوانده می‌شود، هیچ‌جا لاگ یا
+    // ذخیره نمی‌شود، و پس از ساختن توکن از حافظه‌ی سرور خارج می‌شود.
+    if (!apiKey || typeof apiKey !== "string") {
       return Response.json(
-        { error: "GEMINI_API_KEY در تنظیمات Vercel ست نشده است." },
-        { status: 500 }
+        { error: "کلید API ارسال نشده است." },
+        { status: 400 }
       );
     }
 
-    const { targetLanguage } = await request.json().catch(() => ({}));
-
     const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
+      apiKey,
       httpOptions: { apiVersion: "v1alpha" },
     });
 
