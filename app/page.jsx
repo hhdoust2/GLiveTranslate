@@ -122,6 +122,7 @@ export default function Home() {
   const processorRef = useRef(null);
   const sourceRef = useRef(null);
   const playerRef = useRef(null);
+  const readyToSendRef = useRef(false);
 
   async function start() {
     if (!videoUrl) return;
@@ -129,6 +130,20 @@ export default function Home() {
       setStatus("کلید API را وارد کنید.");
       return;
     }
+
+    readyToSendRef.current = false;
+
+    // نکته‌ی مهم: این بخش باید همین‌جا، همزمان با کلیک کاربر، اجرا شود —
+    // نه بعد از await های شبکه — وگرنه مرورگر play() و AudioContext را
+    // به‌خاطر سیاست autoplay بی‌صدا (بدون خطای قابل مشاهده) بلاک می‌کند.
+    try {
+      setupCaptureAndPlayback();
+    } catch (err) {
+      console.error("Audio/video setup error:", err);
+      setStatus("خطا در آماده‌سازی صدا/ویدیو: " + err.message);
+      return;
+    }
+
     setStatus("در حال گرفتن توکن...");
 
     // کلید فقط همین یک‌بار، روی HTTPS، به route خودمان می‌رود تا
@@ -177,11 +192,12 @@ export default function Home() {
         return;
       }
 
-      // تأیید سرور که setup پذیرفته شد — تازه از این‌جا اجازه داریم صدا بفرستیم
+      // تأیید سرور که setup پذیرفته شد — تازه از این‌جا اجازه داریم صدا بفرستیم.
+      // ویدیو و AudioContext از قبل (همزمان با کلیک) ساخته و آماده شده‌اند،
+      // اینجا فقط پرچم ارسال را روشن می‌کنیم.
       if (msg.setupComplete) {
-        setStatus("setup تأیید شد — در حال شروع پخش و ترجمه...");
-        videoRef.current.play();
-        startCapture();
+        setStatus("setup تأیید شد — در حال ارسال صدا و دریافت ترجمه...");
+        readyToSendRef.current = true;
         return;
       }
 
@@ -194,6 +210,7 @@ export default function Home() {
         if (p.inlineData?.data) {
           const pcm = base64ToInt16Array(p.inlineData.data);
           playerRef.current?.push(pcm);
+          setStatus("در حال دریافت صدای ترجمه‌شده...");
         }
       }
 
@@ -214,17 +231,28 @@ export default function Home() {
       );
     };
 
-    playerRef.current = new OutputPlayer(24000);
     setRunning(true);
   }
 
-  function startCapture() {
+  // این تابع همزمان با کلیک کاربر (بدون هیچ await قبلش) صدا زده می‌شود
+  // تا مرورگر play() و AudioContext را به‌عنوان نتیجه‌ی مستقیم user gesture
+  // بپذیرد. ارسال واقعی صدا روی WebSocket با پرچم readyToSendRef کنترل می‌شود.
+  function setupCaptureAndPlayback() {
     const video = videoRef.current;
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    captureCtxRef.current = audioCtx;
 
     // صدای اصلی ویدیو را قطع می‌کنیم تا با صدای ترجمه‌شده قاطی نشود
     video.muted = true;
+    const playPromise = video.play();
+    if (playPromise?.catch) {
+      playPromise.catch((err) => {
+        console.error("video.play() failed:", err);
+        setStatus("پخش ویدیو مسدود شد: " + err.message + " — دوباره روی «شروع» بزنید");
+      });
+    }
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    captureCtxRef.current = audioCtx;
+    if (audioCtx.state === "suspended") audioCtx.resume();
 
     const source = audioCtx.createMediaElementSource(video);
     sourceRef.current = source;
@@ -233,6 +261,7 @@ export default function Home() {
     processorRef.current = processor;
 
     processor.onaudioprocess = (e) => {
+      if (!readyToSendRef.current) return; // قبل از setupComplete چیزی نمی‌فرستیم
       const input = e.inputBuffer.getChannelData(0);
       const down = downsampleBuffer(input, audioCtx.sampleRate, 16000);
       const pcm16 = floatTo16BitPCM(down);
@@ -253,9 +282,13 @@ export default function Home() {
     // processor باید به یک مقصد وصل باشد تا onaudioprocess اجرا شود،
     // ولی چون خروجی صفر نمی‌فرستیم صدای اضافه‌ای پخش نمی‌شود:
     processor.connect(audioCtx.destination);
+
+    playerRef.current = new OutputPlayer(24000);
+    if (playerRef.current.ctx.state === "suspended") playerRef.current.ctx.resume();
   }
 
   function stop() {
+    readyToSendRef.current = false;
     wsRef.current?.close();
     processorRef.current?.disconnect();
     sourceRef.current?.disconnect();
