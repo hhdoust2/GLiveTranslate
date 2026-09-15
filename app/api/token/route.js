@@ -1,58 +1,53 @@
-import { GoogleGenAI } from "@google/genai";
+// این route فایل ویدیو را از آدرس اصلی (که ممکن است CORS نداشته باشد،
+// مثل GitHub Releases) سمت سرور می‌گیرد و با آدرس هم‌مبدأ (خودِ همین
+// سایت) به مرورگر تحویل می‌دهد. چون منبع نهایی هم‌مبدأ می‌شود، دیگر
+// نیازی به crossOrigin در تگ <video> و بدون نیاز به CORS از سمت مبدأ
+// اصلی، هم پخش ویدیو و هم گرفتن صدای آن برای ترجمه ممکن می‌شود.
+//
+// ⚠️ توجه امنیتی: این route هر URL دلخواهی را fetch می‌کند (یک
+// «Open Proxy» ساده است). برای استفاده‌ی شخصی خودتان مشکلی ندارد، ولی
+// اگر این پروژه را عمومی/برای دیگران هم دیپلوی می‌کنید، بهتر است یک
+// محدودیت دامنه یا احراز هویت رویش بگذارید تا کسی از سرور شما برای
+// دور زدن CORS سایت‌های دیگر سوءاستفاده نکند.
 
-// این route کلید API را از کلاینت می‌گیرد (روی HTTPS، پس رمزنگاری‌شده
-// در انتقال است)، فقط برای همین یک درخواست استفاده می‌کند، آن را در
-// جایی لاگ یا ذخیره نمی‌کند، و در ازایش یک توکن کوتاه‌عمر (Ephemeral
-// Token) برمی‌گرداند که مرورگر با آن مستقیماً به Gemini Live API وصل
-// می‌شود — یعنی کلید اصلی هیچ‌وقت روی اتصال WebSocket واقعی سفر نمی‌کند.
-export async function POST(request) {
-  try {
-    const { targetLanguage, apiKey } = await request.json().catch(() => ({}));
+export const dynamic = "force-dynamic";
 
-    // کلید فقط از بدنه‌ی همین درخواست خوانده می‌شود، هیچ‌جا لاگ یا
-    // ذخیره نمی‌شود، و پس از ساختن توکن از حافظه‌ی سرور خارج می‌شود.
-    if (!apiKey || typeof apiKey !== "string") {
-      return Response.json(
-        { error: "کلید API ارسال نشده است." },
-        { status: 400 }
-      );
-    }
+export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const target = searchParams.get("url");
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: { apiVersion: "v1alpha" },
-    });
-
-    const now = Date.now();
-    const expireTime = new Date(now + 30 * 60 * 1000).toISOString(); // ۳۰ دقیقه برای ارسال پیام
-    const newSessionExpireTime = new Date(now + 60 * 1000).toISOString(); // ۱ دقیقه برای شروع سشن
-
-    // نکته: این API هنوز Preview است. اگر نام فیلدها (مثل targetLanguageCode)
-    // در SDK فعلی شما فرق دارد، طبق خطای برگشتی اصلاحش کنید —
-    // مستندات رسمی: https://ai.google.dev/gemini-api/docs/live-api/live-translate
-    const token = await ai.authTokens.create({
-      config: {
-        uses: 1,
-        expireTime,
-        newSessionExpireTime,
-        liveConnectConstraints: {
-          model: "gemini-3.5-live-translate-preview",
-          config: {
-            responseModalities: ["AUDIO"],
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
-            translationConfig: {
-              targetLanguageCode: targetLanguage || "fa",
-              echoTargetLanguage: true,
-            },
-          },
-        },
-      },
-    });
-
-    return Response.json({ token: token.name });
-  } catch (err) {
-    console.error("token error:", err);
-    return Response.json({ error: String(err?.message || err) }, { status: 500 });
+  if (!target || !/^https?:\/\//i.test(target)) {
+    return new Response("پارامتر url معتبر نیست", { status: 400 });
   }
+
+  const fwdHeaders = {};
+  const range = request.headers.get("range");
+  if (range) fwdHeaders["range"] = range;
+
+  let upstream;
+  try {
+    upstream = await fetch(target, { headers: fwdHeaders, redirect: "follow" });
+  } catch (err) {
+    return new Response("خطا در دریافت ویدیو از مبدأ: " + err.message, { status: 502 });
+  }
+
+  if (!upstream.ok && upstream.status !== 206) {
+    return new Response("مبدأ ویدیو خطا داد (status " + upstream.status + ")", {
+      status: upstream.status,
+    });
+  }
+
+  const respHeaders = new Headers();
+  const passthrough = ["content-type", "content-length", "content-range", "accept-ranges", "cache-control"];
+  for (const h of passthrough) {
+    const v = upstream.headers.get(h);
+    if (v) respHeaders.set(h, v);
+  }
+  if (!respHeaders.has("accept-ranges")) respHeaders.set("accept-ranges", "bytes");
+  if (!respHeaders.has("content-type")) respHeaders.set("content-type", "video/mp4");
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: respHeaders,
+  });
 }
