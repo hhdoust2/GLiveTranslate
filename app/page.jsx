@@ -168,6 +168,13 @@ export default function Home() {
         return;
       }
 
+      // اگر سرور خطا برگردونه (مثلاً مدل/فیلد نامعتبر)، این‌جا معلوم می‌شود
+      if (msg.error) {
+        console.error("Gemini server error:", msg.error);
+        setStatus("خطای سرور: " + (msg.error.message || JSON.stringify(msg.error)));
+        return;
+      }
+
       const sc = msg.serverContent;
       if (!sc) return;
 
@@ -186,8 +193,16 @@ export default function Home() {
       }
     };
 
-    ws.onerror = () => setStatus("خطا در اتصال WebSocket");
-    ws.onclose = () => setStatus("اتصال بسته شد");
+    ws.onerror = (e) => {
+      console.error("WebSocket error event:", e);
+      setStatus("خطا در اتصال WebSocket — کنسول مرورگر (F12) را چک کنید");
+    };
+    ws.onclose = (e) => {
+      console.error("WebSocket closed:", { code: e.code, reason: e.reason, wasClean: e.wasClean });
+      setStatus(
+        `اتصال بسته شد — کد: ${e.code}${e.reason ? " | دلیل: " + e.reason : " (دلیلی از سرور نیامد)"}`
+      );
+    };
 
     playerRef.current = new OutputPlayer(24000);
     setRunning(true);
