@@ -1,6 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+const STORAGE_KEY = "gemini_api_key";
 
 const LANGS = [
   { code: "fa", label: "فارسی" },
@@ -87,6 +89,32 @@ export default function Home() {
   const [status, setStatus] = useState("آماده");
   const [subtitle, setSubtitle] = useState("");
   const [running, setRunning] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [rememberKey, setRememberKey] = useState(false);
+
+  // فقط اگر قبلاً کاربر انتخاب کرده که ذخیره بشه، از localStorage می‌خوانیم
+  useEffect(() => {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      setApiKey(saved);
+      setRememberKey(true);
+    }
+  }, []);
+
+  function handleApiKeyChange(value) {
+    setApiKey(value);
+    if (rememberKey) window.localStorage.setItem(STORAGE_KEY, value);
+  }
+
+  function handleRememberToggle(checked) {
+    setRememberKey(checked);
+    if (checked) {
+      window.localStorage.setItem(STORAGE_KEY, apiKey);
+    } else {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  }
 
   const videoRef = useRef(null);
   const wsRef = useRef(null);
@@ -97,12 +125,18 @@ export default function Home() {
 
   async function start() {
     if (!videoUrl) return;
+    if (!apiKey) {
+      setStatus("کلید API را وارد کنید.");
+      return;
+    }
     setStatus("در حال گرفتن توکن...");
 
+    // کلید فقط همین یک‌بار، روی HTTPS، به route خودمان می‌رود تا
+    // Ephemeral Token بسازد؛ در جایی ذخیره یا لاگ نمی‌شود.
     const res = await fetch("/api/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targetLanguage: lang }),
+      body: JSON.stringify({ targetLanguage: lang, apiKey }),
     });
     const data = await res.json();
     if (!data.token) {
@@ -210,6 +244,29 @@ export default function Home() {
   return (
     <div className="wrap">
       <h2>ترجمه‌ی زنده‌ی ویدیو (Gemini 3.5 Live Translate)</h2>
+
+      <div className="row">
+        <input
+          type={showKey ? "text" : "password"}
+          placeholder="کلید Gemini API خودتان را وارد کنید"
+          value={apiKey}
+          onChange={(e) => handleApiKeyChange(e.target.value)}
+          disabled={running}
+          autoComplete="off"
+        />
+        <button type="button" onClick={() => setShowKey((s) => !s)}>
+          {showKey ? "پنهان کن" : "نمایش"}
+        </button>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={rememberKey}
+            onChange={(e) => handleRememberToggle(e.target.checked)}
+            disabled={running}
+          />
+          در همین مرورگر ذخیره شود
+        </label>
+      </div>
 
       <div className="row">
         <input
